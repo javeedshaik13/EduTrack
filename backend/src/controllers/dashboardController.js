@@ -3,6 +3,7 @@ const Student = require('../models/Student');
 const Classroom = require('../models/Classroom');
 const Assignment = require('../models/Assignment');
 const Material = require('../models/Material');
+const Submission = require('../models/Submission');
 const RecentActivity = require('../models/RecentActivity');
 
 const getDashboardStats = async (req, res) => {
@@ -13,12 +14,36 @@ const getDashboardStats = async (req, res) => {
     const classrooms = await Classroom.find({ teacher: teacherId });
     const classroomIds = classrooms.map(c => c._id);
 
-    // Calculate statistics
+    // Get assignments for all teacher's classrooms
+    const assignments = await Assignment.find({ 
+      $or: [
+        { teacher: teacherId },
+        { classroom: { $in: classroomIds } }
+      ]
+    });
+    const assignmentIds = assignments.map(a => a._id);
+
+    // Get submissions for teacher's assignments
+    const submissions = await Submission.find({
+      assignment: { $in: assignmentIds }
+    });
+
+    // Calculate dynamic statistics
     const stats = {
       activeClassrooms: classrooms.length,
       totalStudents: 0,
-      assignmentsCreated: 0,
-      materialsUploaded: 0
+      assignmentsCreated: assignments.length,
+      materialsUploaded: 0,
+      totalSubmissions: submissions.length,
+      pendingSubmissions: 0,
+      gradedSubmissions: 0,
+      averageScore: 0,
+      completionRate: 0,
+      recentActivity: {
+        submissionsThisWeek: 0,
+        newStudentsThisWeek: 0,
+        assignmentsThisWeek: 0
+      }
     };
 
     // Count total students across all classrooms
@@ -26,15 +51,48 @@ const getDashboardStats = async (req, res) => {
       stats.totalStudents += classroom.students.length;
     }
 
-    // Count assignments created by teacher
-    stats.assignmentsCreated = await Assignment.countDocuments({ 
-      teacher: teacherId 
-    });
-
     // Count materials uploaded by teacher
     stats.materialsUploaded = await Material.countDocuments({ 
       teacher: teacherId 
     });
+
+    // Calculate submission statistics
+    const gradedSubmissions = submissions.filter(s => s.status === 'graded' && s.percentage !== undefined);
+    const pendingSubmissions = submissions.filter(s => s.status === 'submitted');
+    
+    stats.gradedSubmissions = gradedSubmissions.length;
+    stats.pendingSubmissions = pendingSubmissions.length;
+
+    // Calculate average score
+    if (gradedSubmissions.length > 0) {
+      const totalScore = gradedSubmissions.reduce((sum, s) => sum + s.percentage, 0);
+      stats.averageScore = Math.round(totalScore / gradedSubmissions.length);
+    }
+
+    // Calculate completion rate
+    const totalPossibleSubmissions = stats.totalStudents * assignments.length;
+    if (totalPossibleSubmissions > 0) {
+      const completedSubmissions = submissions.filter(s => s.status !== 'draft').length;
+      stats.completionRate = Math.round((completedSubmissions / totalPossibleSubmissions) * 100);
+    }
+
+    // Calculate recent activity (last 7 days)
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    stats.recentActivity.submissionsThisWeek = submissions.filter(s => 
+      s.submittedAt && new Date(s.submittedAt) > oneWeekAgo
+    ).length;
+
+    stats.recentActivity.assignmentsThisWeek = assignments.filter(a => 
+      new Date(a.createdAt) > oneWeekAgo
+    ).length;
+
+    // Count new students this week
+    for (const classroom of classrooms) {
+      stats.recentActivity.newStudentsThisWeek += classroom.students.filter(s => 
+        s.joinedAt && new Date(s.joinedAt) > oneWeekAgo
+      ).length;
+    }
 
     res.json({
       success: true,
@@ -132,8 +190,76 @@ const getTeacherOverview = async (req, res) => {
   }
 };
 
+const getTeacherSubmissions = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const { limit = 20, status, subject } = req.query;
+
+    // Get teacher's classrooms and assignments
+    const classrooms = await Classroom.find({ teacher: teacherId });
+    const classroomIds = classrooms.map(c => c._id);
+    
+    const assignments = await Assignment.find({ 
+      $or: [
+        { teacher: teacherId },
+        { classroom: { $in: classroomIds } }
+      ]
+    }).populate('classroom', 'name subject');
+    
+    const assignmentIds = assignments.map(a => a._id);
+
+    // Build query for submissions
+    let submissionQuery = { assignment: { $in: assignmentIds } };
+    if (status) {
+      submissionQuery.status = status;
+    }
+
+    // Get submissions with student and assignment details
+    const submissions = await Submission.find(submissionQuery)
+      .populate('student', 'name email avatar')
+      .populate('assignment', 'title dueDate totalPoints')
+      .sort({ submittedAt: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    // Add classroom and subject info to submissions
+    const enrichedSubmissions = submissions.map(submission => {
+      const assignment = assignments.find(a => a._id.toString() === submission.assignment._id.toString());
+      return {
+        ...submission,
+        subject: assignment?.classroom?.subject || 'Unknown',
+        classroomName: assignment?.classroom?.name || 'Unknown',
+        assignmentTitle: submission.assignment.title,
+        studentName: submission.student?.name || 'Unknown Student',
+        totalPoints: submission.assignment.totalPoints,
+        score: submission.score,
+        percentage: submission.percentage,
+        submittedAt: submission.submittedAt,
+        status: submission.status
+      };
+    });
+
+    // Filter by subject if specified
+    const filteredSubmissions = subject && subject !== 'all' 
+      ? enrichedSubmissions.filter(s => s.subject === subject)
+      : enrichedSubmissions;
+
+    res.json({
+      success: true,
+      data: filteredSubmissions
+    });
+  } catch (error) {
+    console.error('Teacher submissions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch teacher submissions'
+    });
+  }
+};
+
 module.exports = {
   getDashboardStats,
   getRecentActivity,
-  getTeacherOverview
+  getTeacherOverview,
+  getTeacherSubmissions
 };

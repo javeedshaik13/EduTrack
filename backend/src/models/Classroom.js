@@ -48,7 +48,8 @@ const classroomSchema = new mongoose.Schema({
     unique: true,
     sparse: true,
     uppercase: true,
-    length: 8,
+    minlength: 8,
+    maxlength: 8,
     index: true
   },
   pinGeneratedAt: {

@@ -11,7 +11,8 @@ const {
   getSubmissions,
   gradeSubmission,
   getStudentAssignments,
-  submitAssignment
+  submitAssignment,
+  analyzeAssignment
 } = require('../controllers/assignmentController');
 
 const {
@@ -47,6 +48,9 @@ router.delete('/:assignmentId', requireRole('teacher'), deleteAssignment);
 
 // GET /api/assignments/:assignmentId/submissions - Get submissions for assignment (teacher only)
 router.get('/:assignmentId/submissions', requireRole('teacher'), getSubmissions);
+
+// GET /api/assignments/:assignmentId/analyze - Analyze assignment submissions (teacher only)
+router.get('/:assignmentId/analyze', requireRole('teacher'), analyzeAssignment);
 
 // POST /api/assignments/submissions/:submissionId/grade - Grade a submission (teacher only)
 router.post('/submissions/:submissionId/grade', requireRole('teacher'), gradeSubmission);

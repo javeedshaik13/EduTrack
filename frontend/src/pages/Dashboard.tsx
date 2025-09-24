@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api';
 import UploadMaterialModal from '@/components/modals/UploadMaterialModal';
 import ManageClassroomsModal from '@/components/modals/ManageClassroomsModal';
+import SimpleManageModal from '@/components/modals/SimpleManageModal';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -78,82 +79,61 @@ const StudentDashboard: React.FC = () => {
       try {
         setLoading(true);
         
-        // Simulate API calls with mock data
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Fetch real dashboard data from API
+        const response = await apiService.getStudentDashboardData();
         
-        setStats(mockStudentStats);
-        setLeaderboard(mockLeaderboard);
-        setStreakData({ current: 12, longest: 15, lastLogin: new Date().toISOString() });
-        
-        // Check for new achievements and show congratulations
-        const newAchievements = mockStudentStats.badges.filter(badge => {
-          const earnedDate = new Date(badge.earned);
-          const threeDaysAgo = new Date();
-          threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-          return earnedDate > threeDaysAgo;
-        });
-        
-        if (newAchievements.length > 0) {
-          setTimeout(() => {
-            newAchievements.forEach(achievement => {
-              toast({
-                title: `🎉 Congratulations! New Badge Earned!`,
-                description: `You've earned the "${achievement.name}" badge! Keep up the great work!`,
-                duration: 5000,
+        if (response.success && response.data) {
+          const dashboardData = response.data;
+          
+          // Set stats from API response
+          setStats({
+            totalAssignments: dashboardData.summary.totalAssignments,
+            completedAssignments: dashboardData.summary.completedAssignments,
+            averageScore: dashboardData.summary.averageScore,
+            badges: dashboardData.student.badges,
+            streak: dashboardData.student.stats.streak,
+            rank: dashboardData.student.stats.rank,
+            totalStudents: 45, // This would come from a separate leaderboard API
+            pointsEarned: dashboardData.summary.totalPoints,
+            materialsViewed: 0, // This would be tracked separately
+            questionsAsked: 0 // This would be tracked separately
+          });
+          
+          // Set other data
+          setClassrooms(dashboardData.classrooms);
+          setAssignments(dashboardData.recentAssignments);
+          setStreakData({ 
+            current: dashboardData.student.stats.streak, 
+            longest: dashboardData.student.stats.longestStreak, 
+            lastLogin: new Date().toISOString() 
+          });
+          
+          // For now, use mock leaderboard - this would be a separate API call
+          setLeaderboard(mockLeaderboard);
+          
+          // Check for new achievements and show congratulations
+          const newAchievements = dashboardData.student.badges.filter((badge: any) => {
+            // For now, show all badges as new - in real app, track when badges were earned
+            return true;
+          });
+          
+          if (newAchievements.length > 0 && newAchievements.length <= 2) {
+            setTimeout(() => {
+              newAchievements.forEach((achievement: any) => {
+                toast({
+                  title: `🎉 Congratulations! Badge Earned!`,
+                  description: `You've earned the "${achievement}" badge! Keep up the great work!`,
+                  duration: 5000,
+                });
               });
-            });
-          }, 1500);
-        }
-        
-        // Fetch real classroom data
-        try {
-          const classroomsResponse = await apiService.getStudentClassrooms();
-          if (classroomsResponse.success) {
-            setClassrooms(classroomsResponse.data || []);
-            
-            // Fetch assignments and materials from joined classrooms
-            const allAssignments: any[] = [];
-            const allMaterials: any[] = [];
-            
-            for (const classroom of classroomsResponse.data || []) {
-              const [assignmentsRes, materialsRes] = await Promise.all([
-                apiService.getClassroomAssignments(classroom.id),
-                apiService.getClassroomMaterials(classroom.id)
-              ]);
-              
-              if (assignmentsRes.success) {
-                allAssignments.push(...assignmentsRes.data.map((a: any) => ({...a, classroom: classroom.name})));
-              }
-              
-              if (materialsRes.success) {
-                allMaterials.push(...materialsRes.data.map((m: any) => ({...m, classroom: classroom.name})));
-              }
-            }
-            
-            setAssignments(allAssignments);
-            setMaterials(allMaterials);
-            
-            // Update stats based on real data
-            const completedCount = allAssignments.filter(a => a.status === 'completed' || a.status === 'graded').length;
-            const avgScore = allAssignments
-              .filter(a => a.score && a.totalPoints)
-              .reduce((sum, a, _, arr) => sum + (a.score / a.totalPoints * 100) / arr.length, 0);
-            
-            setStats({
-              ...mockStudentStats,
-              totalAssignments: allAssignments.length,
-              completedAssignments: completedCount,
-              averageScore: Math.round(avgScore) || mockStudentStats.averageScore,
-              materialsViewed: allMaterials.length
-            });
+            }, 1500);
           }
-        } catch (error) {
-          console.error('Error fetching classroom data:', error);
+        } else {
+          // Fallback to mock data if API fails
+          setStats(mockStudentStats);
+          setLeaderboard(mockLeaderboard);
+          setStreakData({ current: 12, longest: 15, lastLogin: new Date().toISOString() });
         }
-        
-        // Update streak and stats
-        await apiService.updateStreak();
-        await apiService.updateStudentStats();
         
       } catch (error) {
         console.error('Error fetching student data:', error);
@@ -426,13 +406,17 @@ const StudentDashboard: React.FC = () => {
             {classrooms.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {classrooms.map((classroom: any) => (
-                  <div key={classroom.id} className="p-3 rounded-lg border bg-muted/30">
+                  <div 
+                    key={classroom._id || classroom.id} 
+                    className="p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/classrooms/${classroom._id || classroom.id}`)}
+                  >
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="font-medium">{classroom.name}</p>
                         <p className="text-sm text-muted-foreground">{classroom.subject}</p>
                       </div>
-                      <Badge variant="secondary">{classroom.teacher}</Badge>
+                      <Badge variant="secondary">{classroom.teacher || 'Teacher'}</Badge>
                     </div>
                   </div>
                 ))}
@@ -657,6 +641,7 @@ const TeacherDashboard: React.FC = () => {
 
       {/* Teacher Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* First Row - Basic Stats */}
         <Card className="shadow-card">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Classrooms</CardTitle>
@@ -675,7 +660,9 @@ const TeacherDashboard: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">{stats?.totalStudents || 0}</div>
-            <p className="text-xs text-muted-foreground">Across all classes</p>
+            <p className="text-xs text-muted-foreground">
+              +{stats?.recentActivity?.newStudentsThisWeek || 0} joined this week
+            </p>
           </CardContent>
         </Card>
 
@@ -685,8 +672,10 @@ const TeacherDashboard: React.FC = () => {
             <ClipboardList className="h-4 w-4 text-secondary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-secondary">{stats?.totalAssignments || 0}</div>
-            <p className="text-xs text-muted-foreground">This semester</p>
+            <div className="text-2xl font-bold text-secondary">{stats?.assignmentsCreated || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              +{stats?.recentActivity?.assignmentsThisWeek || 0} this week
+            </p>
           </CardContent>
         </Card>
 
@@ -696,8 +685,57 @@ const TeacherDashboard: React.FC = () => {
             <BookOpen className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-accent">{stats?.totalMaterials || 0}</div>
+            <div className="text-2xl font-bold text-accent">{stats?.materialsUploaded || 0}</div>
             <p className="text-xs text-muted-foreground">Resources shared</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Advanced Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="shadow-card">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Submissions</CardTitle>
+            <ClipboardList className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{stats?.totalSubmissions || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              +{stats?.recentActivity?.submissionsThisWeek || 0} this week
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-card">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending Grading</CardTitle>
+            <Clock className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-orange-600">{stats?.pendingSubmissions || 0}</div>
+            <p className="text-xs text-muted-foreground">Awaiting review</p>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-card">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Average Score</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">{stats?.averageScore || 0}%</div>
+            <p className="text-xs text-muted-foreground">Class performance</p>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-card">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
+            <CheckCircle className="h-4 w-4 text-purple-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-purple-600">{stats?.completionRate || 0}%</div>
+            <p className="text-xs text-muted-foreground">Assignment completion</p>
           </CardContent>
         </Card>
       </div>
@@ -928,6 +966,13 @@ const TeacherDashboard: React.FC = () => {
                   Manage Classrooms
                 </Button>
               </ManageClassroomsModal>
+              
+              <SimpleManageModal>
+                <Button variant="outline" className="w-full justify-start gap-3 h-12 border-green-200 text-green-700 hover:bg-green-50">
+                  <Users className="h-5 w-5 text-green-600" />
+                  Test Simple Manager
+                </Button>
+              </SimpleManageModal>
               
               <Button variant="outline" className="w-full justify-start gap-3 h-12">
                 <TrendingUp className="h-5 w-5 text-accent" />

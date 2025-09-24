@@ -374,15 +374,27 @@ const Classrooms: React.FC = () => {
                 </div>
                 
                 <div className="flex gap-2">
+                  <ManageClassroomsModal>
+                    <Button 
+                      size="sm" 
+                      className="flex-1"
+                    >
+                      <Users className="h-4 w-4 mr-1" />
+                      Manage
+                    </Button>
+                  </ManageClassroomsModal>
                   <Button 
                     size="sm" 
-                    className="flex-1"
-                    onClick={() => navigate(`/classrooms/${classroom._id || classroom.id}/manage`)}
+                    variant="outline"
+                    onClick={() => {
+                      // Generate PIN for students to join
+                      navigator.clipboard.writeText(classroom.inviteCode || 'No PIN available');
+                      toast({
+                        title: "PIN Copied!",
+                        description: `Classroom PIN: ${classroom.inviteCode || 'No PIN'} copied to clipboard`,
+                      });
+                    }}
                   >
-                    <Users className="h-4 w-4 mr-1" />
-                    Manage
-                  </Button>
-                  <Button size="sm" variant="outline">
                     <UserPlus className="h-4 w-4" />
                   </Button>
                 </div>

@@ -4,78 +4,232 @@ const { assignmentsData, announcementsData, performanceData } = require('../data
 // Get student dashboard data
 const getStudentDashboard = async (req, res) => {
   try {
-    const student = await Student.findById(req.user._id);
+    const studentId = req.user._id;
+    const Assignment = require('../models/Assignment');
+    const Submission = require('../models/Submission');
+    const Classroom = require('../models/Classroom');
+    
+    // Get student with populated classrooms
+    const student = await Student.findById(studentId).populate('classrooms');
     if (!student) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Student not found' 
+      });
     }
+
+    // Get all assignments from student's classrooms
+    const classroomIds = student.classrooms.map(c => c._id);
+    const assignments = await Assignment.find({
+      classroom: { $in: classroomIds }
+    }).populate('classroom', 'name subject')
+     .sort({ dueDate: 1 });
+
+    // Get student's submissions
+    const submissions = await Submission.find({
+      student: studentId
+    }).populate('assignment', 'title dueDate totalPoints');
+
+    // Calculate dynamic stats
+    const totalAssignments = assignments.length;
+    const submittedAssignments = submissions.filter(s => s.status !== 'draft').length;
+    const gradedSubmissions = submissions.filter(s => s.status === 'graded');
+    const completedAssignments = gradedSubmissions.length;
+    
+    // Calculate average score
+    const averageScore = gradedSubmissions.length > 0 
+      ? Math.round(gradedSubmissions.reduce((sum, s) => sum + s.percentage, 0) / gradedSubmissions.length)
+      : 0;
+
+    // Calculate total points earned
+    const totalPoints = gradedSubmissions.reduce((sum, s) => sum + s.score, 0);
+
+    // Get pending assignments (not submitted yet)
+    const submittedAssignmentIds = submissions.map(s => s.assignment._id.toString());
+    const pendingAssignments = assignments.filter(a => 
+      !submittedAssignmentIds.includes(a._id.toString()) && 
+      new Date(a.dueDate) > new Date()
+    );
+
+    // Get recent assignments (last 5)
+    const recentAssignments = assignments.slice(0, 5).map(assignment => {
+      const submission = submissions.find(s => s.assignment._id.toString() === assignment._id.toString());
+      return {
+        _id: assignment._id,
+        title: assignment.title,
+        subject: assignment.classroom.subject,
+        classroomName: assignment.classroom.name,
+        dueDate: assignment.dueDate,
+        totalPoints: assignment.totalPoints,
+        status: submission ? submission.status : 'pending',
+        score: submission ? submission.score : null,
+        percentage: submission ? submission.percentage : null
+      };
+    });
+
+    // Get upcoming deadlines (next 7 days)
+    const today = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(today.getDate() + 7);
+    
+    const upcomingDeadlines = pendingAssignments
+      .filter(a => new Date(a.dueDate) <= nextWeek)
+      .slice(0, 5)
+      .map(assignment => ({
+        _id: assignment._id,
+        title: assignment.title,
+        subject: assignment.classroom.subject,
+        dueDate: assignment.dueDate,
+        daysLeft: Math.ceil((new Date(assignment.dueDate) - today) / (1000 * 60 * 60 * 24))
+      }));
+
+    // Update student stats
+    const updatedStats = {
+      totalAssignments,
+      completedAssignments,
+      pendingAssignments: pendingAssignments.length,
+      averageScore,
+      totalPoints,
+      streak: student.stats.streak || 0,
+      longestStreak: student.stats.longestStreak || 0,
+      rank: student.stats.rank || null,
+      level: Math.floor(totalPoints / 100) + 1 // Level up every 100 points
+    };
+
+    // Update student record with new stats
+    await Student.findByIdAndUpdate(studentId, {
+      'stats.totalAssignments': totalAssignments,
+      'stats.completedAssignments': completedAssignments,
+      'stats.pendingAssignments': pendingAssignments.length,
+      'stats.averageScore': averageScore,
+      'stats.totalPoints': totalPoints,
+      'stats.level': updatedStats.level
+    });
 
     // Dashboard summary data
     const dashboardData = {
-      student: {
-        name: student.name,
-        grade: student.grade,
-        avatar: student.avatar,
-        stats: student.stats,
-        badges: student.badges
-      },
-      recentAssignments: assignmentsData.slice(0, 3).map(assignment => ({
-        ...assignment,
-        id: Math.random().toString(36).substr(2, 9),
-        status: Math.random() > 0.5 ? 'pending' : 'completed'
-      })),
-      announcements: announcementsData.slice(0, 2),
-      weeklyProgress: performanceData.weeklyProgress,
-      upcomingDeadlines: assignmentsData.map(assignment => ({
-        ...assignment,
-        id: Math.random().toString(36).substr(2, 9),
-        daysLeft: Math.ceil((assignment.dueDate - new Date()) / (1000 * 60 * 60 * 24))
-      })).slice(0, 3)
+      success: true,
+      data: {
+        student: {
+          name: student.name,
+          grade: student.grade,
+          avatar: student.avatar,
+          studentId: student.studentId,
+          stats: updatedStats,
+          badges: student.badges || []
+        },
+        classrooms: student.classrooms.map(c => ({
+          _id: c._id,
+          name: c.name,
+          subject: c.subject,
+          studentsCount: c.students ? c.students.length : 0
+        })),
+        recentAssignments,
+        upcomingDeadlines,
+        summary: {
+          totalAssignments,
+          completedAssignments,
+          pendingAssignments: pendingAssignments.length,
+          averageScore,
+          totalPoints,
+          classroomsCount: student.classrooms.length
+        }
+      }
     };
 
     res.json(dashboardData);
   } catch (error) {
     console.error('Dashboard error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
 };
 
 // Get student assignments
 const getStudentAssignments = async (req, res) => {
   try {
+    const studentId = req.user._id;
     const { status, subject } = req.query;
+    const Assignment = require('../models/Assignment');
+    const Submission = require('../models/Submission');
     
-    let assignments = assignmentsData.map(assignment => ({
-      ...assignment,
-      id: Math.random().toString(36).substr(2, 9),
-      status: Math.random() > 0.3 ? 'pending' : 'completed',
-      submittedAt: Math.random() > 0.5 ? new Date() : null,
-      grade: Math.random() > 0.5 ? Math.floor(Math.random() * 40) + 60 : null
-    }));
-
-    // Filter by status if provided
-    if (status) {
-      assignments = assignments.filter(assignment => assignment.status === status);
+    // Get student with populated classrooms
+    const student = await Student.findById(studentId).populate('classrooms');
+    if (!student) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Student not found' 
+      });
     }
 
-    // Filter by subject if provided
+    // Get all assignments from student's classrooms
+    const classroomIds = student.classrooms.map(c => c._id);
+    let query = { classroom: { $in: classroomIds } };
+    
+    // Add subject filter if provided
     if (subject) {
-      assignments = assignments.filter(assignment => 
-        assignment.subject.toLowerCase().includes(subject.toLowerCase())
-      );
+      query.subject = subject;
+    }
+    
+    const assignments = await Assignment.find(query)
+      .populate('classroom', 'name subject')
+      .sort({ dueDate: 1 });
+
+    // Get student's submissions
+    const submissions = await Submission.find({
+      student: studentId
+    }).populate('assignment', 'title dueDate totalPoints');
+
+    // Process assignments with submission status
+    const processedAssignments = assignments.map(assignment => {
+      const submission = submissions.find(s => s.assignment._id.toString() === assignment._id.toString());
+      const now = new Date();
+      const dueDate = new Date(assignment.dueDate);
+      
+      let assignmentStatus = 'pending';
+      if (submission) {
+        assignmentStatus = submission.status;
+      } else if (dueDate < now) {
+        assignmentStatus = 'overdue';
+      }
+      
+      return {
+        id: assignment._id,
+        _id: assignment._id,
+        title: assignment.title,
+        subject: assignment.classroom.subject,
+        classroomName: assignment.classroom.name,
+        dueDate: assignment.dueDate,
+        status: assignmentStatus,
+        difficulty: assignment.difficulty || 'medium',
+        points: assignment.totalPoints,
+        totalPoints: assignment.totalPoints,
+        description: assignment.description,
+        score: submission ? submission.score : null,
+        percentage: submission ? submission.percentage : null,
+        submittedAt: submission ? submission.submittedAt : null,
+        doubts: [] // This would be populated from a doubts collection
+      };
+    });
+
+    // Apply status filter if provided
+    let filteredAssignments = processedAssignments;
+    if (status) {
+      filteredAssignments = processedAssignments.filter(a => a.status === status);
     }
 
     res.json({
-      assignments,
-      summary: {
-        total: assignments.length,
-        pending: assignments.filter(a => a.status === 'pending').length,
-        completed: assignments.filter(a => a.status === 'completed').length,
-        overdue: assignments.filter(a => a.status === 'pending' && new Date(a.dueDate) < new Date()).length
-      }
+      success: true,
+      data: filteredAssignments
     });
   } catch (error) {
     console.error('Assignments error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
 };
 

@@ -48,6 +48,7 @@ app.use('/api/dashboard', require('./src/routes/dashboard'));
 app.use('/api/materials', require('./src/routes/materials'));
 app.use('/api/assignments', require('./src/routes/assignments'));
 app.use('/api/classrooms', require('./src/routes/classrooms'));
+app.use('/api/submissions', require('./src/routes/submissions'));
 app.use('/api/ai-assistant', require('./src/routes/ai-assistant'));
 app.use('/api/profile', require('./src/routes/profile'));
 app.use('/api/doubts', require('./src/routes/doubts'));

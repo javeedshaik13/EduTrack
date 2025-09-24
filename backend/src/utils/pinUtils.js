@@ -89,6 +89,7 @@ const validatePin = async (inputPin, Classroom) => {
       };
     }
   } catch (error) {
+    console.error('Database error during PIN validation:', error);
     return {
       success: false,
       error: 'Database error occurred while validating PIN.'

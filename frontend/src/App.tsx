@@ -16,6 +16,8 @@ import Statistics from "@/pages/Statistics";
 import Profile from "@/pages/Profile";
 import Classrooms from "@/pages/Classrooms";
 import ManageClassroom from "@/pages/ManageClassroom";
+import ClassroomView from "@/pages/ClassroomView";
+import AssignmentSubmission from "@/components/AssignmentSubmission";
 import Chatbot from "@/pages/Chatbot";
 import NotFound from "./pages/NotFound";
 
@@ -116,6 +118,26 @@ const App = () => (
                   <ProtectedRoute requiredRole="teacher">
                     <MainLayout>
                       <ManageClassroom />
+                    </MainLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/classrooms/:classroomId"
+                element={
+                  <ProtectedRoute>
+                    <MainLayout>
+                      <ClassroomView />
+                    </MainLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/assignments/:assignmentId/submit"
+                element={
+                  <ProtectedRoute requiredRole="student">
+                    <MainLayout>
+                      <AssignmentSubmission />
                     </MainLayout>
                   </ProtectedRoute>
                 }

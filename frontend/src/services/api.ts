@@ -222,6 +222,16 @@ class ApiService {
     return this.request('/api/dashboard/stats');
   }
 
+  async getTeacherSubmissions(params?: { limit?: number; status?: string; subject?: string }): Promise<ApiResponse<any[]>> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.subject) queryParams.append('subject', params.subject);
+    
+    const url = `/api/dashboard/submissions${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    return this.request(url);
+  }
+
   async getRecentActivity(): Promise<ApiResponse<any[]>> {
     return this.request('/api/dashboard/recent-activity');
   }
@@ -320,6 +330,10 @@ class ApiService {
     });
   }
 
+  async analyzeAssignment(assignmentId: string): Promise<ApiResponse<any>> {
+    return this.request(`/api/assignments/${assignmentId}/analyze`);
+  }
+
   // Classrooms API methods
   async createClassroom(data: any): Promise<ApiResponse<any>> {
     return this.request('/api/classrooms', {
@@ -373,6 +387,37 @@ class ApiService {
 
   async getClassroomAnalytics(classroomId: string): Promise<ApiResponse<any>> {
     return this.request(`/api/classrooms/${classroomId}/analytics`);
+  }
+
+  // Submission API methods
+  async startSubmission(assignmentId: string): Promise<ApiResponse<any>> {
+    return this.request(`/api/submissions/start/${assignmentId}`, {
+      method: 'POST'
+    });
+  }
+
+  async submitAssignment(submissionId: string, answers: any[]): Promise<ApiResponse<any>> {
+    return this.request(`/api/submissions/submit/${submissionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ answers })
+    });
+  }
+
+  async getSubmission(submissionId: string): Promise<ApiResponse<any>> {
+    return this.request(`/api/submissions/${submissionId}`);
+  }
+
+  async gradeSubmission(submissionId: string, grades: any[], feedback?: any): Promise<ApiResponse<any>> {
+    return this.request(`/api/submissions/grade/${submissionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ grades, feedback })
+    });
+  }
+
+  async generateClassroomPin(classroomId: string): Promise<ApiResponse<any>> {
+    return this.request(`/api/classrooms/${classroomId}/generate-pin`, {
+      method: 'POST'
+    });
   }
 
   async removeStudentFromClassroom(classroomId: string, studentId: string): Promise<ApiResponse<any>> {
@@ -559,11 +604,6 @@ class ApiService {
     });
   }
 
-  async generateClassroomPin(classroomId: string): Promise<ApiResponse<any>> {
-    return this.request(`/api/classrooms/${classroomId}/generate-pin`, {
-      method: 'POST',
-    });
-  }
 
   async validateClassroomPin(pin: string): Promise<ApiResponse<any>> {
     return this.request('/api/student/classrooms/validate-pin', {
@@ -597,6 +637,10 @@ class ApiService {
 
   async getStudentClassrooms(): Promise<ApiResponse<any>> {
     return this.request('/api/student/classrooms');
+  }
+
+  async getStudentDashboardData(): Promise<ApiResponse<any>> {
+    return this.request('/api/student/dashboard');
   }
 
   async getTeacherSubmissions(filters?: { subject?: string; status?: string }): Promise<ApiResponse<any[]>> {

@@ -26,9 +26,57 @@ router.get('/', authenticate, requireRole('teacher'), getClassrooms);
 router.get('/:classroomId', authenticate, requireRole('teacher'), getClassroomById);
 
 // GET /api/classrooms/:classroomId/students - Get classroom students
-router.get('/:classroomId/students', authenticate, requireRole('teacher'), (req, res) => {
-  // Return empty array for now - students will be populated from classroom data
-  res.json({ success: true, data: [] });
+router.get('/:classroomId/students', authenticate, requireRole('teacher'), async (req, res) => {
+  try {
+    const { classroomId } = req.params;
+    const teacherId = req.user._id;
+    
+    const Classroom = require('../models/Classroom');
+    const Student = require('../models/Student');
+    
+    // Verify classroom ownership
+    const classroom = await Classroom.findOne({
+      _id: classroomId,
+      teacher: teacherId
+    });
+    
+    if (!classroom) {
+      return res.status(404).json({
+        success: false,
+        error: 'Classroom not found or access denied'
+      });
+    }
+    
+    // Get students from classroom.students array
+    const studentIds = classroom.students.map(s => s.studentId);
+    const students = await Student.find({ _id: { $in: studentIds } })
+      .select('name email studentId grade avatar')
+      .lean();
+    
+    // Combine student data with classroom-specific info
+    const studentsWithClassroomInfo = students.map(student => {
+      const classroomStudent = classroom.students.find(s => 
+        s.studentId.toString() === student._id.toString()
+      );
+      
+      return {
+        ...student,
+        joinedAt: classroomStudent?.joinedAt,
+        isActive: classroomStudent?.isActive || true
+      };
+    });
+    
+    res.json({
+      success: true,
+      data: studentsWithClassroomInfo
+    });
+  } catch (error) {
+    console.error('Error fetching classroom students:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch students'
+    });
+  }
 });
 
 // GET /api/classrooms/:classroomId/assignments - Get classroom assignments
@@ -37,24 +85,188 @@ router.get('/:classroomId/assignments', authenticate, requireRole('teacher'), (r
   res.json({ success: true, data: [] });
 });
 
+// DELETE /api/classrooms/:classroomId/students/:studentId - Remove student from classroom
+router.delete('/:classroomId/students/:studentId', authenticate, requireRole('teacher'), async (req, res) => {
+  try {
+    const { classroomId, studentId } = req.params;
+    const teacherId = req.user._id;
+    
+    const Classroom = require('../models/Classroom');
+    const Student = require('../models/Student');
+    
+    // Verify classroom ownership
+    const classroom = await Classroom.findOne({
+      _id: classroomId,
+      teacher: teacherId
+    });
+    
+    if (!classroom) {
+      return res.status(404).json({
+        success: false,
+        error: 'Classroom not found or access denied'
+      });
+    }
+    
+    // Remove student from classroom.students array
+    classroom.students = classroom.students.filter(s => 
+      s.studentId.toString() !== studentId.toString()
+    );
+    await classroom.save();
+    
+    // Remove classroom from student's classrooms array
+    await Student.findByIdAndUpdate(
+      studentId,
+      { $pull: { classrooms: classroomId } }
+    );
+    
+    res.json({
+      success: true,
+      message: 'Student removed from classroom successfully'
+    });
+  } catch (error) {
+    console.error('Error removing student from classroom:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove student'
+    });
+  }
+});
+
 // GET /api/classrooms/:classroomId/materials - Get classroom materials
 router.get('/:classroomId/materials', authenticate, requireRole('teacher'), (req, res) => {
   // Return empty array for now - materials will be populated from classroom data
   res.json({ success: true, data: [] });
 });
 
-// GET /api/classrooms/:classroomId/analytics - Get classroom analytics
-router.get('/:classroomId/analytics', authenticate, requireRole('teacher'), (req, res) => {
-  // Return basic analytics structure
-  res.json({ 
-    success: true, 
-    data: {
-      totalStudents: 0,
-      totalAssignments: 0,
-      averageScore: 0,
-      completionRate: 0
+// POST /api/classrooms/:classroomId/generate-pin - Generate new PIN for classroom
+router.post('/:classroomId/generate-pin', authenticate, requireRole('teacher'), async (req, res) => {
+  try {
+    const { classroomId } = req.params;
+    const teacherId = req.user._id;
+    
+    const Classroom = require('../models/Classroom');
+    
+    // Verify classroom ownership
+    const classroom = await Classroom.findOne({
+      _id: classroomId,
+      teacher: teacherId
+    });
+    
+    if (!classroom) {
+      return res.status(404).json({
+        success: false,
+        error: 'Classroom not found or access denied'
+      });
     }
-  });
+    
+    // Generate unique PIN
+    const newPin = await generateUniquePin(Classroom);
+    
+    // Update classroom with new PIN
+    classroom.pin = newPin;
+    classroom.pinGeneratedAt = new Date();
+    await classroom.save();
+    
+    res.json({
+      success: true,
+      data: {
+        pin: newPin,
+        classroomName: classroom.name,
+        generatedAt: classroom.pinGeneratedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error generating PIN:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate PIN'
+    });
+  }
+});
+
+// GET /api/classrooms/:classroomId/analytics - Get classroom analytics
+router.get('/:classroomId/analytics', authenticate, requireRole('teacher'), async (req, res) => {
+  try {
+    const { classroomId } = req.params;
+    const teacherId = req.user._id;
+    
+    const Classroom = require('../models/Classroom');
+    const Assignment = require('../models/Assignment');
+    const Submission = require('../models/Submission');
+    
+    // Verify classroom ownership
+    const classroom = await Classroom.findOne({
+      _id: classroomId,
+      teacher: teacherId
+    });
+    
+    if (!classroom) {
+      return res.status(404).json({
+        success: false,
+        error: 'Classroom not found or access denied'
+      });
+    }
+    
+    // Get assignments for this classroom
+    const assignments = await Assignment.find({ classroom: classroomId });
+    const assignmentIds = assignments.map(a => a._id);
+    
+    // Get submissions for these assignments
+    const submissions = await Submission.find({
+      assignment: { $in: assignmentIds }
+    });
+    
+    // Calculate statistics
+    const totalStudents = classroom.students.length;
+    const totalAssignments = assignments.length;
+    
+    // Calculate average score from graded submissions
+    const gradedSubmissions = submissions.filter(s => s.status === 'graded' && s.percentage !== undefined);
+    const averageScore = gradedSubmissions.length > 0 
+      ? Math.round(gradedSubmissions.reduce((sum, s) => sum + s.percentage, 0) / gradedSubmissions.length)
+      : 0;
+    
+    // Calculate completion rate
+    const totalPossibleSubmissions = totalStudents * totalAssignments;
+    const actualSubmissions = submissions.filter(s => s.status !== 'draft').length;
+    const completionRate = totalPossibleSubmissions > 0 
+      ? Math.round((actualSubmissions / totalPossibleSubmissions) * 100)
+      : 0;
+    
+    // Recent activity
+    const recentSubmissions = submissions
+      .filter(s => s.submittedAt && new Date(s.submittedAt) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+      .length;
+    
+    const recentJoins = classroom.students
+      .filter(s => s.joinedAt && new Date(s.joinedAt) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+      .length;
+    
+    res.json({
+      success: true,
+      data: {
+        totalStudents,
+        totalAssignments,
+        averageScore,
+        completionRate,
+        recentActivity: {
+          submissionsThisWeek: recentSubmissions,
+          newStudentsThisWeek: recentJoins
+        },
+        submissions: {
+          total: submissions.length,
+          graded: gradedSubmissions.length,
+          pending: submissions.filter(s => s.status === 'submitted').length
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching classroom analytics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch analytics'
+    });
+  }
 });
 
 // PUT /api/classrooms/:classroomId - Update classroom

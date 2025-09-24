@@ -615,6 +615,281 @@ const submitAssignment = async (req, res) => {
   }
 };
 
+// Assignment Analyzer - Provides comprehensive analysis of assignment submissions
+const analyzeAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+    const teacherId = req.user._id;
+
+    // Validate assignment ownership
+    const assignment = await Assignment.findOne({
+      _id: assignmentId,
+      teacher: teacherId
+    }).populate('classroom', 'name students');
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assignment not found or access denied'
+      });
+    }
+
+    // Get all submissions for this assignment
+    const submissions = await Submission.find({
+      assignment: assignmentId
+    }).populate('student', 'name email studentId')
+     .sort({ submittedAt: -1 });
+
+    // Calculate comprehensive analytics
+    const totalStudents = assignment.classroom.students.length;
+    const submittedCount = submissions.filter(s => s.status !== 'draft').length;
+    const gradedCount = submissions.filter(s => s.status === 'graded').length;
+    const pendingCount = totalStudents - submittedCount;
+    
+    // Score Analysis
+    const gradedSubmissions = submissions.filter(s => s.status === 'graded' && s.score !== undefined);
+    const scores = gradedSubmissions.map(s => s.score);
+    const percentages = gradedSubmissions.map(s => s.percentage);
+    
+    const averageScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    const averagePercentage = percentages.length > 0 ? percentages.reduce((a, b) => a + b, 0) / percentages.length : 0;
+    const highestScore = scores.length > 0 ? Math.max(...scores) : 0;
+    const lowestScore = scores.length > 0 ? Math.min(...scores) : 0;
+    const medianScore = scores.length > 0 ? scores.sort((a, b) => a - b)[Math.floor(scores.length / 2)] : 0;
+
+    // Grade Distribution
+    const gradeDistribution = {
+      A: gradedSubmissions.filter(s => s.percentage >= 90).length,
+      B: gradedSubmissions.filter(s => s.percentage >= 80 && s.percentage < 90).length,
+      C: gradedSubmissions.filter(s => s.percentage >= 70 && s.percentage < 80).length,
+      D: gradedSubmissions.filter(s => s.percentage >= 60 && s.percentage < 70).length,
+      F: gradedSubmissions.filter(s => s.percentage < 60).length
+    };
+
+    // Performance Categories
+    const performanceCategories = {
+      excellent: gradedSubmissions.filter(s => s.percentage >= 90).length,
+      good: gradedSubmissions.filter(s => s.percentage >= 80 && s.percentage < 90).length,
+      average: gradedSubmissions.filter(s => s.percentage >= 70 && s.percentage < 80).length,
+      needs_improvement: gradedSubmissions.filter(s => s.percentage >= 60 && s.percentage < 70).length,
+      poor: gradedSubmissions.filter(s => s.percentage < 60).length
+    };
+
+    // Time Analysis
+    const submissionsWithTime = submissions.filter(s => s.timeSpent > 0);
+    const averageTimeSpent = submissionsWithTime.length > 0 
+      ? submissionsWithTime.reduce((a, b) => a + b.timeSpent, 0) / submissionsWithTime.length 
+      : 0;
+
+    // Late Submissions Analysis
+    const lateSubmissions = submissions.filter(s => s.isLate);
+    const onTimeSubmissions = submissions.filter(s => !s.isLate && s.status !== 'draft');
+
+    // Question-wise Analysis (if quiz/structured assignment)
+    let questionAnalysis = [];
+    if (assignment.questions && assignment.questions.length > 0) {
+      questionAnalysis = assignment.questions.map((question, index) => {
+        const questionResponses = submissions.filter(s => 
+          s.answers && s.answers.some(a => a.questionId.toString() === question._id.toString())
+        );
+        
+        const correctAnswers = questionResponses.filter(s => 
+          s.answers.some(a => a.questionId.toString() === question._id.toString() && a.isCorrect)
+        ).length;
+
+        return {
+          questionNumber: index + 1,
+          questionText: question.question || question.text || `Question ${index + 1}`,
+          totalResponses: questionResponses.length,
+          correctAnswers,
+          incorrectAnswers: questionResponses.length - correctAnswers,
+          accuracyRate: questionResponses.length > 0 ? (correctAnswers / questionResponses.length) * 100 : 0,
+          difficulty: question.difficulty || 'medium'
+        };
+      });
+    }
+
+    // Difficulty-wise Performance
+    const difficultyAnalysis = {
+      easy: {
+        attempted: 0,
+        correct: 0,
+        percentage: 0
+      },
+      medium: {
+        attempted: 0,
+        correct: 0,
+        percentage: 0
+      },
+      hard: {
+        attempted: 0,
+        correct: 0,
+        percentage: 0
+      }
+    };
+
+    // Calculate difficulty analysis from submissions
+    submissions.forEach(submission => {
+      if (submission.aiReport && submission.aiReport.difficultyAnalysis) {
+        ['easy', 'medium', 'hard'].forEach(level => {
+          if (submission.aiReport.difficultyAnalysis[level]) {
+            difficultyAnalysis[level].attempted += submission.aiReport.difficultyAnalysis[level].attempted || 0;
+            difficultyAnalysis[level].correct += submission.aiReport.difficultyAnalysis[level].correct || 0;
+          }
+        });
+      }
+    });
+
+    // Calculate percentages for difficulty analysis
+    Object.keys(difficultyAnalysis).forEach(level => {
+      if (difficultyAnalysis[level].attempted > 0) {
+        difficultyAnalysis[level].percentage = 
+          (difficultyAnalysis[level].correct / difficultyAnalysis[level].attempted) * 100;
+      }
+    });
+
+    // Student Performance Insights
+    const topPerformers = gradedSubmissions
+      .sort((a, b) => b.percentage - a.percentage)
+      .slice(0, 5)
+      .map(s => ({
+        studentName: s.student.name,
+        studentId: s.student.studentId,
+        score: s.score,
+        percentage: s.percentage,
+        timeSpent: s.timeSpent
+      }));
+
+    const strugglingStudents = gradedSubmissions
+      .filter(s => s.percentage < 70)
+      .sort((a, b) => a.percentage - b.percentage)
+      .slice(0, 5)
+      .map(s => ({
+        studentName: s.student.name,
+        studentId: s.student.studentId,
+        score: s.score,
+        percentage: s.percentage,
+        timeSpent: s.timeSpent
+      }));
+
+    // AI-Powered Insights
+    const insights = [];
+    
+    if (averagePercentage < 70) {
+      insights.push({
+        type: 'concern',
+        title: 'Low Class Average',
+        description: `The class average of ${averagePercentage.toFixed(1)}% suggests the assignment may have been challenging. Consider reviewing the material or providing additional support.`,
+        priority: 'high'
+      });
+    }
+
+    if (lateSubmissions.length > totalStudents * 0.3) {
+      insights.push({
+        type: 'warning',
+        title: 'High Late Submission Rate',
+        description: `${lateSubmissions.length} students (${((lateSubmissions.length / totalStudents) * 100).toFixed(1)}%) submitted late. Consider if the deadline was appropriate.`,
+        priority: 'medium'
+      });
+    }
+
+    if (pendingCount > 0) {
+      insights.push({
+        type: 'info',
+        title: 'Pending Submissions',
+        description: `${pendingCount} students haven't submitted yet. Consider sending reminders or checking if they need assistance.`,
+        priority: 'medium'
+      });
+    }
+
+    if (performanceCategories.excellent > totalStudents * 0.5) {
+      insights.push({
+        type: 'success',
+        title: 'Strong Class Performance',
+        description: `Over half the class performed excellently. The material seems well-understood by most students.`,
+        priority: 'low'
+      });
+    }
+
+    // Recommendations
+    const recommendations = [];
+    
+    if (averagePercentage < 60) {
+      recommendations.push('Consider reviewing the assignment material in class');
+      recommendations.push('Provide additional practice problems on challenging topics');
+      recommendations.push('Schedule office hours for struggling students');
+    }
+
+    if (questionAnalysis.some(q => q.accuracyRate < 50)) {
+      recommendations.push('Review questions with low accuracy rates in detail');
+      recommendations.push('Provide explanations for commonly missed questions');
+    }
+
+    if (strugglingStudents.length > 0) {
+      recommendations.push('Reach out to struggling students individually');
+      recommendations.push('Consider peer tutoring or study groups');
+    }
+
+    const analysisData = {
+      assignmentInfo: {
+        title: assignment.title,
+        subject: assignment.subject,
+        dueDate: assignment.dueDate,
+        totalPoints: assignment.totalPoints,
+        classroomName: assignment.classroom.name
+      },
+      submissionStats: {
+        totalStudents,
+        submittedCount,
+        gradedCount,
+        pendingCount,
+        submissionRate: (submittedCount / totalStudents) * 100,
+        gradingProgress: (gradedCount / submittedCount) * 100
+      },
+      scoreAnalysis: {
+        averageScore: Math.round(averageScore * 100) / 100,
+        averagePercentage: Math.round(averagePercentage * 100) / 100,
+        highestScore,
+        lowestScore,
+        medianScore,
+        scoreRange: highestScore - lowestScore
+      },
+      gradeDistribution,
+      performanceCategories,
+      timeAnalysis: {
+        averageTimeSpent: Math.round(averageTimeSpent),
+        averageTimeFormatted: `${Math.floor(averageTimeSpent / 60)}m ${averageTimeSpent % 60}s`,
+        fastestSubmission: submissionsWithTime.length > 0 ? Math.min(...submissionsWithTime.map(s => s.timeSpent)) : 0,
+        slowestSubmission: submissionsWithTime.length > 0 ? Math.max(...submissionsWithTime.map(s => s.timeSpent)) : 0
+      },
+      submissionTiming: {
+        onTimeSubmissions: onTimeSubmissions.length,
+        lateSubmissions: lateSubmissions.length,
+        lateSubmissionRate: (lateSubmissions.length / submittedCount) * 100
+      },
+      questionAnalysis,
+      difficultyAnalysis,
+      topPerformers,
+      strugglingStudents,
+      insights,
+      recommendations,
+      generatedAt: new Date()
+    };
+
+    res.json({
+      success: true,
+      data: analysisData
+    });
+
+  } catch (error) {
+    console.error('Assignment analysis error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to analyze assignment'
+    });
+  }
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
@@ -624,5 +899,6 @@ module.exports = {
   getSubmissions,
   gradeSubmission,
   getStudentAssignments,
-  submitAssignment
+  submitAssignment,
+  analyzeAssignment
 };

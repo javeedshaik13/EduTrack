@@ -7,12 +7,32 @@ const { validatePin } = require('../utils/pinUtils');
 router.post('/join', authenticate, async (req, res) => {
   try {
     const { pin } = req.body;
-    const studentId = req.user.id;
+    const studentId = req.user._id;
+    
+    console.log('Join classroom request:', { pin, studentId, userRole: req.user.role });
+    
+    // Validate required fields
+    if (!pin) {
+      return res.status(400).json({
+        success: false,
+        error: 'PIN is required'
+      });
+    }
+    
+    if (!studentId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Student authentication required'
+      });
+    }
+    
     const Classroom = require('../models/Classroom');
-    const User = require('../models/User');
     
     // Validate PIN using shared utility
+    console.log('Original PIN:', pin);
+    console.log('PIN length:', pin.length);
     const validationResult = await validatePin(pin, Classroom);
+    console.log('PIN validation result:', validationResult);
     
     if (!validationResult.success) {
       return res.status(400).json({
@@ -24,7 +44,11 @@ router.post('/join', authenticate, async (req, res) => {
     const classroom = validationResult.classroom;
     
     // Check if student is already in classroom
-    if (classroom.students.includes(studentId)) {
+    const isAlreadyJoined = classroom.students.some(student => 
+      student.studentId.toString() === studentId.toString()
+    );
+    
+    if (isAlreadyJoined) {
       return res.json({
         success: true,
         data: {
@@ -34,15 +58,26 @@ router.post('/join', authenticate, async (req, res) => {
       });
     }
     
-    // Add student to classroom
-    classroom.students.push(studentId);
-    await classroom.save();
+    // Add student to classroom with proper structure
+    classroom.students.push({
+      studentId: studentId,
+      joinedAt: new Date(),
+      isActive: true
+    });
     
-    // Add classroom to student's enrolled classrooms
-    await User.findByIdAndUpdate(
+    console.log('Saving classroom with new student...');
+    await classroom.save();
+    console.log('Classroom saved successfully');
+    
+    // Add classroom to student's classrooms
+    const Student = require('../models/Student');
+    console.log('Updating student record...');
+    const updateResult = await Student.findByIdAndUpdate(
       studentId,
-      { $addToSet: { enrolledClassrooms: classroom._id } }
+      { $addToSet: { classrooms: classroom._id } },
+      { new: true }
     );
+    console.log('Student update result:', updateResult ? 'Success' : 'Failed');
     
     res.json({
       success: true,
@@ -98,21 +133,21 @@ router.post('/validate-pin', async (req, res) => {
 // GET /api/student/classrooms - Get student's enrolled classrooms
 router.get('/', authenticate, async (req, res) => {
   try {
-    const studentId = req.user.id;
-    const User = require('../models/User');
+    const studentId = req.user._id;
+    const Student = require('../models/Student');
     
-    const student = await User.findById(studentId).populate({
-      path: 'enrolledClassrooms',
+    const student = await Student.findById(studentId).populate({
+      path: 'classrooms',
       populate: {
         path: 'teacher',
         select: 'name email'
       }
     });
     
-    if (student && student.enrolledClassrooms) {
+    if (student && student.classrooms) {
       res.json({
         success: true,
-        data: student.enrolledClassrooms
+        data: student.classrooms
       });
     } else {
       res.json({

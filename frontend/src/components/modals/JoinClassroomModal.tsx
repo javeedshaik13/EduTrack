@@ -30,8 +30,11 @@ const JoinClassroomModal: React.FC<JoinClassroomModalProps> = ({ children, onCla
     }
 
     setJoining(true);
+    console.log('Attempting to join classroom with PIN:', pin.trim());
+    
     try {
       const response = await apiService.joinClassroom(pin.trim());
+      console.log('Join classroom response:', response);
       
       if (response.success) {
         toast({
@@ -43,7 +46,9 @@ const JoinClassroomModal: React.FC<JoinClassroomModalProps> = ({ children, onCla
         setOpen(false);
         onClassroomJoined?.();
       } else {
-        // Use shared PIN validation logic
+        console.log('API join failed, attempting fallback:', response.error);
+        
+        // Use shared PIN validation logic as fallback
         const mockClassrooms = getMockClassrooms();
         const validationResult = validatePin(pin, mockClassrooms);
         
@@ -59,13 +64,14 @@ const JoinClassroomModal: React.FC<JoinClassroomModalProps> = ({ children, onCla
         } else {
           toast({
             title: "Failed to Join Classroom",
-            description: validationResult.error,
+            description: response.error || validationResult.error || "Invalid PIN or classroom not found.",
             variant: "destructive"
           });
         }
       }
     } catch (error) {
-      console.warn('Network error, using shared PIN validation:', error);
+      console.error('Network error during classroom join:', error);
+      
       // Fallback to shared PIN validation logic
       const mockClassrooms = getMockClassrooms();
       const validationResult = validatePin(pin, mockClassrooms);
@@ -81,8 +87,8 @@ const JoinClassroomModal: React.FC<JoinClassroomModalProps> = ({ children, onCla
         onClassroomJoined?.();
       } else {
         toast({
-          title: "Failed to Join Classroom",
-          description: validationResult.error,
+          title: "Connection Error",
+          description: "Unable to connect to server. Please check your internet connection and try again.",
           variant: "destructive"
         });
       }

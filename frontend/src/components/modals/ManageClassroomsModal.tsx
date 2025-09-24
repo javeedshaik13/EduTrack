@@ -12,8 +12,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Plus, Share, Settings, Loader2, Copy, CheckCircle } from 'lucide-react';
+import { Users, Plus, Share, Settings, Loader2, Copy, CheckCircle, UserPlus, Eye, BarChart3, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import ClassroomSettingsModal from './ClassroomSettingsModal';
 
 interface Classroom {
   _id: string;
@@ -36,6 +37,11 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [selectedClassroom, setSelectedClassroom] = useState<Classroom | null>(null);
+  const [showClassroomDetails, setShowClassroomDetails] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [students, setStudents] = useState<any[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
   const [newClassroom, setNewClassroom] = useState({
     name: '',
     subject: '',
@@ -48,9 +54,12 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
     setLoading(true);
     try {
       const response = await apiService.getClassrooms();
+      console.log('fetchClassrooms response:', response);
       if (response.success) {
+        console.log('Classrooms data:', response.data);
         setClassrooms(response.data || []);
       } else {
+        console.error('Failed to load classrooms:', response.error);
         toast({
           title: "Failed to load classrooms",
           description: response.error || "Please try again",
@@ -58,6 +67,7 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
         });
       }
     } catch (error) {
+      console.error('Network error loading classrooms:', error);
       toast({
         title: "Network error",
         description: "Failed to load classrooms. Please check your connection.",
@@ -112,24 +122,89 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
 
   const handleShareClassroom = async (classroomId: string) => {
     try {
-      const response = await apiService.generateInviteCode(classroomId);
-      if (response.success && response.data?.inviteCode) {
-        await navigator.clipboard.writeText(response.data.inviteCode);
+      const response = await apiService.generateClassroomPin(classroomId);
+      if (response.success && response.data?.pin) {
+        await navigator.clipboard.writeText(response.data.pin);
         toast({
-          title: "Invite code copied!",
-          description: "The classroom invite code has been copied to your clipboard",
+          title: "PIN copied!",
+          description: "The classroom PIN has been copied to your clipboard",
         });
       } else {
         toast({
-          title: "Failed to generate invite code",
+          title: "Failed to generate PIN",
           description: response.error || "Please try again",
           variant: "destructive"
         });
       }
     } catch (error) {
       toast({
-        title: "Failed to copy invite code",
-        description: "Please try again or copy the code manually",
+        title: "Failed to copy PIN",
+        description: "Please try again or copy the PIN manually",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const fetchClassroomStudents = async (classroomId: string) => {
+    console.log('fetchClassroomStudents called for classroomId:', classroomId);
+    setLoadingStudents(true);
+    try {
+      const response = await apiService.getClassroomStudents(classroomId);
+      console.log('getClassroomStudents response:', response);
+      if (response.success) {
+        setStudents(response.data || []);
+        console.log('Students set:', response.data);
+      } else {
+        console.error('Failed to load students:', response.error);
+        toast({
+          title: "Failed to load students",
+          description: response.error || "Please try again",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error('Network error fetching students:', error);
+      toast({
+        title: "Network error",
+        description: "Failed to load students. Please check your connection.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  const handleManageClassroom = async (classroom: Classroom) => {
+    console.log('handleManageClassroom called with:', classroom);
+    setSelectedClassroom(classroom);
+    setShowClassroomDetails(true);
+    console.log('Modal state set, fetching students for classroom:', classroom._id);
+    await fetchClassroomStudents(classroom._id);
+  };
+
+  const handleRemoveStudent = async (studentId: string) => {
+    if (!selectedClassroom) return;
+    
+    try {
+      const response = await apiService.removeStudentFromClassroom(selectedClassroom._id, studentId);
+      if (response.success) {
+        toast({
+          title: "Student removed",
+          description: "Student has been removed from the classroom",
+        });
+        await fetchClassroomStudents(selectedClassroom._id);
+        await fetchClassrooms(); // Refresh classroom list to update student count
+      } else {
+        toast({
+          title: "Failed to remove student",
+          description: response.error || "Please try again",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Network error",
+        description: "Failed to remove student. Please check your connection.",
         variant: "destructive"
       });
     }
@@ -140,6 +215,10 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
       fetchClassrooms();
     }
   }, [open]);
+
+  useEffect(() => {
+    console.log('Modal state changed:', { showClassroomDetails, selectedClassroom: selectedClassroom?.name });
+  }, [showClassroomDetails, selectedClassroom]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -290,12 +369,24 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
                           size="sm"
                           variant="outline"
                           onClick={() => {
-                            // Navigate to classroom management page
-                            window.location.href = `/classrooms/${classroom._id}/manage`;
+                            console.log('Manage button clicked for:', classroom.name);
+                            handleManageClassroom(classroom);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View Details
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            console.log('Settings button clicked for:', classroom.name);
+                            setSelectedClassroom(classroom);
+                            setShowSettings(true);
                           }}
                         >
                           <Settings className="h-4 w-4 mr-1" />
-                          Manage
+                          Settings
                         </Button>
                       </div>
                     </div>
@@ -319,8 +410,163 @@ const ManageClassroomsModal: React.FC<ManageClassroomsModalProps> = ({ children 
               </Button>
             </div>
           )}
+
+          {/* Classroom Details View */}
+          {showClassroomDetails && selectedClassroom && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999]" onClick={(e) => {
+              // Close modal if clicking on backdrop
+              if (e.target === e.currentTarget) {
+                setShowClassroomDetails(false);
+                setSelectedClassroom(null);
+                setStudents([]);
+              }
+            }}>
+              <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto m-4">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold">{selectedClassroom.name}</h2>
+                    <p className="text-muted-foreground">{selectedClassroom.subject}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowClassroomDetails(false);
+                      setSelectedClassroom(null);
+                      setStudents([]);
+                    }}
+                  >
+                    Close
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <Users className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <p className="text-2xl font-bold">{students.length}</p>
+                          <p className="text-sm text-muted-foreground">Total Students</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <BarChart3 className="h-8 w-8 text-green-500" />
+                        <div>
+                          <p className="text-2xl font-bold">0</p>
+                          <p className="text-sm text-muted-foreground">Assignments</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle className="h-8 w-8 text-purple-500" />
+                        <div>
+                          <p className="text-2xl font-bold">0%</p>
+                          <p className="text-sm text-muted-foreground">Avg Score</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-semibold">Students</h3>
+                    <Button
+                      onClick={() => handleShareClassroom(selectedClassroom._id)}
+                      className="bg-gradient-primary"
+                    >
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Generate PIN to Add Students
+                    </Button>
+                  </div>
+
+                  {loadingStudents ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span>Loading students...</span>
+                      </div>
+                    </div>
+                  ) : students.length > 0 ? (
+                    <div className="space-y-3">
+                      {students.map((student) => (
+                        <Card key={student._id}>
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold">
+                                  {student.name?.charAt(0)?.toUpperCase() || 'S'}
+                                </div>
+                                <div>
+                                  <p className="font-medium">{student.name || 'Unknown Student'}</p>
+                                  <p className="text-sm text-muted-foreground">{student.email || 'No email'}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Joined: {student.joinedAt ? new Date(student.joinedAt).toLocaleDateString() : 'Unknown'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={student.isActive ? "default" : "secondary"}>
+                                  {student.isActive ? "Active" : "Inactive"}
+                                </Badge>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRemoveStudent(student._id)}
+                                  className="text-red-600 hover:text-red-700"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">No students yet</h3>
+                      <p className="text-muted-foreground mb-4">
+                        Generate a PIN and share it with students to let them join this classroom.
+                      </p>
+                      <Button
+                        onClick={() => handleShareClassroom(selectedClassroom._id)}
+                        className="bg-gradient-primary"
+                      >
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Generate PIN
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
+
+      {/* Classroom Settings Modal */}
+      <ClassroomSettingsModal
+        isOpen={showSettings}
+        onClose={() => {
+          setShowSettings(false);
+          setSelectedClassroom(null);
+        }}
+        classroom={selectedClassroom}
+        onSettingsUpdated={() => {
+          fetchClassrooms();
+        }}
+      />
     </Dialog>
   );
 };
